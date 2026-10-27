@@ -15323,7 +15323,21 @@ impl LayoutEngine {
                 // 하며, om_top 선가산분·om_bottom 후가산(#521)을 겹치면 om 상하합
                 // (1704HU=22.7px)만큼 후속 본문이 밀려 단 하단이 절단된다.
                 let mut stored_lh_covers_om = false;
-                if let Some(seg) = host_seg {
+                let ps_id_for_ls = composed
+                    .get(para_index)
+                    .map(|c| c.para_style_id as usize)
+                    .unwrap_or(para.para_shape_id as usize);
+                let fresh_tac_metric = crate::renderer::tac_table_affect_line_spacing_metrics(
+                    para,
+                    self.dpi,
+                    styles,
+                    styles.para_styles.get(ps_id_for_ls),
+                );
+                if let Some((_, leading)) = fresh_tac_metric {
+                    // Synthetic host segments are not saved layout evidence.
+                    // Match the fresh object-line metric used by flow/measure.
+                    y_offset += leading;
+                } else if let Some(seg) = host_seg {
                     if seg.line_spacing > 0 {
                         let native_stored_layout =
                             self.profile.get().hwp5_stored_pagination_layout()
@@ -15383,13 +15397,9 @@ impl LayoutEngine {
                     // [#5788] 저장 lineseg 가 없는(기계생성) 문서는 앵커 줄의 trailing
                     // line_spacing 을 실을 seg 가 없어 표 아래 문단이 그만큼 붙는다
                     // (3190263: 표 19개 × −9.2px 누적으로 8쪽 vs 한글 9쪽; 한글 계산
-                    // 조판은 앵커 줄간격을 더한다). 문단 스타일의 퍼센트 줄간격을
-                    // 앵커 글꼴 크기로 환산해 보충한다 — 저장 lineseg 보유 문서
+                    // 조판은 앵커 줄간격을 더한다). 위의 affectLSpacing 전용 분기 외에는
+                    // 기존 앵커 글꼴 기준을 보존한다. 저장 lineseg 보유 문서
                     // (#1116 핀 계열)는 위 경로 그대로라 불변.
-                    let ps_id_for_ls = composed
-                        .get(para_index)
-                        .map(|c| c.para_style_id as usize)
-                        .unwrap_or(para.para_shape_id as usize);
                     let font_size = para
                         .char_shapes
                         .first()

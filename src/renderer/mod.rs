@@ -2537,7 +2537,9 @@ pub(crate) fn tac_object_stack_line_metrics(
 /// **줄간격**은 문단 형식 높이에만 실리므로 줄이 없으면 통째로 빠졌다. 한/글 2024 합성 문서
 /// (`samples/issue7418/tac_host_line_synthetic`, 글자 10·17pt × 줄간격 100·160·200% × 표 높이
 /// 1716·3014)의 저장 줄은 12조합 모두 `vertsize = 표 높이 + 바깥 여백`,
-/// `spacing = 글자 크기 × (줄간격 − 100%)` 이다 — 그림·도형 줄(`#7079`)과 같은 leading 이다.
+/// 기존 관측은 `spacing = 글자 크기 × (줄간격 − 100%)` 이다.
+/// 별도로 확인한 `affectLSpacing=1`인 단일 표는 아래 공통 helper가 표 줄 상자를
+/// 기준으로 계산한다. 그림·도형 줄(`#7079`)의 기존 계약은 바꾸지 않는다.
 /// 높이는 바깥 여백을 뺀 표 높이다(여백은 `tac_outer_margin_v_px` 가 예산에 더한다).
 pub(crate) fn tac_table_host_line_metrics(
     para: &crate::model::paragraph::Paragraph,
@@ -2563,7 +2565,58 @@ pub(crate) fn tac_table_host_line_metrics(
         })?;
     Some((
         height,
-        tac_object_stack_line_leading_px(para, styles, para_style),
+        tac_table_affect_line_spacing_metrics(para, dpi, styles, para_style)
+            .map(|(_, leading)| leading)
+            .unwrap_or_else(|| tac_object_stack_line_leading_px(para, styles, para_style)),
+    ))
+}
+
+/// A fresh single inline-table host can use its object line box as the
+/// percentage-spacing base. Real stored lines already own their spacing and
+/// must never be overridden; import-generated synthetic lines are still fresh.
+/// Keep mixed controls, visible text, non-percent spacing,
+/// and objects no taller than the host font on their existing paths.
+/// The verified base is the declared table frame plus its outer margins;
+/// this helper does not infer a replacement measured frame after cell growth.
+/// The table's outer margins belong to the line box exactly once; callers add
+/// them separately to flow height. Return `(table content height, extra gap)`.
+pub(crate) fn tac_table_affect_line_spacing_metrics(
+    para: &crate::model::paragraph::Paragraph,
+    dpi: f64,
+    styles: &crate::renderer::style_resolver::ResolvedStyleSet,
+    para_style: Option<&crate::renderer::style_resolver::ResolvedParaStyle>,
+) -> Option<(f64, f64)> {
+    use crate::model::control::Control;
+    if !para_has_no_stored_line_segs(para) || !para.text.is_empty() {
+        return None;
+    }
+    let [Control::Table(table)] = para.controls.as_slice() else {
+        return None;
+    };
+    if !table.common.treat_as_char || !table.common.affect_line_spacing {
+        return None;
+    }
+    let style = para_style?;
+    if !matches!(style.line_spacing_type, LineSpacingType::Percent)
+        || !style.line_spacing.is_finite()
+        || style.line_spacing <= 100.0
+    {
+        return None;
+    }
+    let char_shape_id = para
+        .char_shape_id_at(0)
+        .or_else(|| para.char_shapes.first().map(|shape| shape.char_shape_id))?;
+    let font_size = styles.char_styles.get(char_shape_id as usize)?.font_size;
+    let frame_hu = i64::from(table.common.height)
+        + i64::from(table.outer_margin_top)
+        + i64::from(table.outer_margin_bottom);
+    let frame_height = hwpunit_to_px(i32::try_from(frame_hu).ok()?, dpi);
+    if !font_size.is_finite() || font_size <= 0.0 || frame_height <= font_size {
+        return None;
+    }
+    Some((
+        hwpunit_to_px(i32::try_from(table.common.height).ok()?, dpi),
+        frame_height * (style.line_spacing - 100.0) / 100.0,
     ))
 }
 

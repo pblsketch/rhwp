@@ -5101,9 +5101,16 @@ fn reflow_line_segs_impl(
             }
             line_specs.push((line_start, line_width, line_height));
 
+            // A fresh single TAC table with affectLSpacing uses its object
+            // frame as the percentage base. Publish that spacing in the
+            // synthetic segment before following paragraph positions are built.
+            let fresh_tac_metric = crate::renderer::tac_table_affect_line_spacing_metrics(
+                para, dpi, styles, para_style,
+            );
             let orig_line_segs = para.line_segs.clone();
             let mut new_line_segs = Vec::with_capacity(line_specs.len());
-            // 개체만 있는 줄도 줄간격 기준은 **그 문단의 글자모양 크기**다. 한컴은 개체 높이를
+            // 위 affectLSpacing 전용 분기 외에는 개체 줄의 줄간격 기준을 호스트 글자모양으로
+            // 유지한다. 기존 관측에서 한컴은 개체 높이를
             // line_height 에만 반영하고 spacing 은 글자 높이로 계산한다(정답지 개체 줄 18/18:
             // 165%·14pt 문단의 표 줄 spacing 912 = 1400×0.65, 160%·10pt 문단의 그림 줄 600 = 1000×0.6).
             // 0.0 을 넘기면 내부 기본 12px(900 HU)로 떨어져 585 가 되고, 쪽마다 327 HU 씩 덜 쌓인다.
@@ -5139,6 +5146,9 @@ fn reflow_line_segs_impl(
                     };
                 }
                 apply_inline_control_line_height(&mut seg, height_hwp);
+                if let Some((_, leading)) = fresh_tac_metric {
+                    seg.line_spacing = crate::renderer::px_to_hwpunit(leading, dpi);
+                }
                 new_line_segs.push(seg);
             }
 
